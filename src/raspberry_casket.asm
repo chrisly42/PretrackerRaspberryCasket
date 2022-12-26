@@ -316,6 +316,9 @@ PRETRACKER_COPPER_OUTPUT = 0 ; 0 = standard CPU wait, 1 = Copperlist
 ; - For each wave:
 ;   - 42 Bytes: Wave info structure (see definition below)
 
+; ----------------------------------------
+; Some constants for clarity
+
 MAX_VOLUME      = $40
 MAX_SPEED       = $2f
 MAX_WAVES       = 24
@@ -326,13 +329,15 @@ NOTES_IN_OCTAVE = 12
 NUM_CHANNELS    = 4     ; yes, you can reduce the number of channels if you want
 
 ; ----------------------------------------
-; Pattern data
+; Pretracker file structures
+
+; Pattern data (PATT and IPTT)
 pdb_pitch_ctrl      = 0
 pdb_inst_effect     = 1 ; for normal pattern data
 pdb_effect_cmd      = 1 ; for inst pattern
 pdb_effect_data     = 2
 
-; Pattern pos data
+; Pattern pos data (POSD)
 ppd_pat_num         = 0
 ppd_pat_shift       = 1
 
@@ -347,6 +352,47 @@ ii_adsr_release     = 6
 ii_pattern_steps    = 7
 ii_SIZEOF           = 8
 
+; Wave Info (WAVE)
+wi_loop_start_w    = $00
+wi_loop_end_w      = $02
+wi_subloop_len_w   = $04
+wi_allow_9xx_b     = $06
+wi_subloop_wait_b  = $07
+wi_subloop_step_w  = $08
+wi_chipram_w       = $0a
+wi_loop_offset_w   = $0c
+wi_chord_note1_b   = $0e
+wi_chord_note2_b   = $0f
+wi_chord_note3_b   = $10
+wi_chord_shift_b   = $11
+wi_osc_unknown_b   = $12 ; always $00? (unused in code?)
+wi_osc_phase_spd_b = $13
+wi_flags_b         = $14 ; bit 0/1: osc type, bit 2: needs extra octaves, bit 3: boost, bit 4: pitch linear, bit 5: vol fast
+wi_osc_phase_min_b = $15
+wi_osc_phase_max_b = $16
+wi_osc_basenote_b  = $17
+wi_osc_gain_b      = $18
+wi_sam_len_b       = $19 ; in multiples of 128, zero-based (0 == 128)
+wi_mix_wave_b      = $1a
+wi_vol_attack_b    = $1b
+wi_vol_delay_b     = $1c
+wi_vol_decay_b     = $1d
+wi_vol_sustain_b   = $1e
+wi_flt_type_b      = $1f ; 1=lowpass, 2=highpass, 3=bandpass, 4=notch
+wi_flt_resonance_b = $20
+wi_pitch_ramp_b    = $21
+wi_flt_start_b     = $22
+wi_flt_min_b       = $23
+wi_flt_max_b       = $24
+wi_flt_speed_b     = $25
+wi_mod_params_l    = $26
+wi_mod_wetness_b   = $26
+wi_mod_length_b    = $27
+wi_mod_predelay_b  = $28
+wi_mod_density_b   = $29 ; (1-7), unisono (bits 3/4) and post bit 5
+wi_SIZEOF          = $2a
+
+; ----------------------------------------
 ; Unpacked Instrument Info (addition to player for faster processing)
                     rsreset
 uii_vibrato_delay   rs.w    1
@@ -361,7 +407,7 @@ uii_pattern_steps   rs.b    1
                     rs.b    1 ; padding
 uii_SIZEOF          rs.b    0
 
-
+; ----------------------------------------
 ; MySong offsets
                         rsreset
 sv_waveinfo_table       rs.l    MAX_WAVES ; 24 pointers to wave infos to avoid mulu
@@ -490,7 +536,8 @@ owb_tri_waves   rs.b    128
 owb_wave_length rs.b    1
 owb_SIZEOF      rs.b    0
 
-; player global variables (not bound to channel)
+; ----------------------------------------
+; MyPlayer global variables (not bound to channel)
                         rsreset
 ; DO NOT CHANGE ORDER -- OPTIMIZED INIT
 pv_pat_curr_row_b       rs.b    1 ; current step
@@ -513,7 +560,7 @@ pv_wave_sample_table    rs.l    MAX_WAVES ; 24 pointers to sample starts
 pv_period_table         rs.w    16*NOTES_IN_OCTAVE*3
 pv_channeldata          rs.b    NUM_CHANNELS*pcd_SIZEOF
                         IFNE    PRETRACKER_VOLUME_TABLE
-pv_osc_buffers          rs.b    0
+pv_osc_buffers          rs.b    0 ; reuse space of volume_table, which is bigger than NOTES_IN_OCTAVE*owb_SIZEOF
 pv_volume_table         rs.b    (MAX_VOLUME+1)*MAX_VOLUME*2
                         ELSE
 pv_osc_buffers          rs.b    NOTES_IN_OCTAVE*owb_SIZEOF
@@ -537,64 +584,7 @@ pv_wg_osc_speed_l       rs.l    1
 pv_wg_flt_taps          rs.w    4
 pv_SIZEOF               rs.b    0
 
-; waveinfo $2a bytes
-wi_loop_start_w    = $00
-wi_loop_end_w      = $02
-wi_subloop_len_w   = $04
-wi_allow_9xx_b     = $06
-wi_subloop_wait_b  = $07
-wi_subloop_step_w  = $08
-wi_chipram_w       = $0a
-wi_loop_offset_w   = $0c
-wi_chord_note1_b   = $0e
-wi_chord_note2_b   = $0f
-wi_chord_note3_b   = $10
-wi_chord_shift_b   = $11
-wi_osc_unknown_b   = $12 ; always $00? (unused in code?)
-wi_osc_phase_spd_b = $13
-wi_flags_b         = $14 ; bit 0/1: osc type, bit 2: needs extra octaves, bit 3: boost, bit 4: pitch linear, bit 5: vol fast
-wi_osc_phase_min_b = $15
-wi_osc_phase_max_b = $16
-wi_osc_basenote_b  = $17
-wi_osc_gain_b      = $18
-wi_sam_len_b       = $19 ; in multiples of 128, zero-based (0 == 128)
-wi_mix_wave_b      = $1a
-wi_vol_attack_b    = $1b
-wi_vol_delay_b     = $1c
-wi_vol_decay_b     = $1d
-wi_vol_sustain_b   = $1e
-wi_flt_type_b      = $1f ; 1=lowpass, 2=highpass, 3=bandpass, 4=notch
-wi_flt_resonance_b = $20
-wi_pitch_ramp_b    = $21
-wi_flt_start_b     = $22
-wi_flt_min_b       = $23
-wi_flt_max_b       = $24
-wi_flt_speed_b     = $25
-wi_mod_params_l    = $26
-wi_mod_wetness_b   = $26
-wi_mod_length_b    = $27
-wi_mod_predelay_b  = $28
-wi_mod_density_b   = $29 ; (1-7), unisono (bits 3/4) and post bit 5
-wi_SIZEOF          = $2a
-
-; LSP has a byte stream and a word stream:
-; - there is a control byte, which can be 0, to allow additional control outputs.
-; - the control values go through an indirection table for reasonable combinations
-; - the bits  4- 7 tell if the byte stream contains new volumes
-; - the bits  0- 3 tell if the word stream contains new periods (if the bits are all zero, this is skipped)
-; - the bits 15- 8 come in pairs:
-;   - 11=SetIns+Reset (take inst offset from word stream, load ptr/len, stop DMA, set reset pos inst for loop)
-;   - 10=SetIns+NoReset (take inst offset from word stream, load ptr/len, set reset pos inst for loop)
-;   - 01=Load new adr/len (set loop)
-;
-; what would we need for a Pretracker capable LSP-like player?
-; - base instrument -> byte (5 bit)
-; - offset sequence -> byte
-; - loop len -> byte
-; - period -> word
-; - volume -> byte
-; - trigger -> bit
-;
+;--------------------------------------------------------------------
 
         include "../includes/hardware/custom.i"
         include "../includes/hardware/dmabits.i"
@@ -632,6 +622,9 @@ CLIPTO8BITAFTERADD MACRO
         eor.b   #$7f,\1
 .noclip\@
         ENDM
+
+;--------------------------------------------------------------------
+; Code starts here
 
         IFNE    PRETRACKER_KEEP_JUMP_TABLE
 pre_FuncTable
