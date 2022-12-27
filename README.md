@@ -105,6 +105,7 @@ solve this problem.
 ### V1.1 (unreleased)
 - Optimized base displacement by reordering variables
 - Further optimized ADSR code
+- Optimized wave loop code
 
 ### V1.0 (26-Dec-22)
  

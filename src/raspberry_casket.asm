@@ -471,7 +471,7 @@ pcd_inst_speed_stop_b       rs.b    1 ; speed byte, $ff stops processing
 pcd_inst_pitch_w            rs.w    1
 
 pcd_inst_vol_w              rs.w    1
-pcd_loaded_inst_vol_b       rs.b    1 ; low byte only
+pcd_loaded_inst_vol_b       rs.b    1
 pcd_pat_vol_b               rs.b    1 ; Multiplied with volume of instrument.
 ; DO NOT CHANGE ORDER -- OPTIMIZED CLEARING END
 
@@ -495,8 +495,6 @@ pcd_track_init_delay_b      rs.b    1 ; number of frames to ignore the delay
 
 pcd_inst_num_w              rs.w    1 ; current instrument number (lower byte used)
 ;pcd_inst_new_step_w         rs.w    1 ; seems to be unused
-pcd_inst_ping_pong_s_w      rs.w    1 ; direction of pingpong (-1 / +1)
-
 pcd_inst_subloop_wait_w     rs.w    1
 pcd_inst_loop_offset_w      rs.w    1
 pcd_inst_info_ptr           rs.l    1 ; pointer to currently active instrument
@@ -507,7 +505,7 @@ pcd_channel_num_b           rs.b    1
 pcd_adsr_phase_w            rs.w    1 ; 0=attack, 1=decay, 2=sustain, 3=release
 pcd_adsr_volume_w           rs.w    1 ; 0 for restart / $400 (word only)
 pcd_adsr_phase_speed_b      rs.b    1
-                            rs.b    1
+pcd_inst_ping_pong_dir_b    rs.b    1 ; direction of ping-pong (-1 == $00 / +1 = $ff)
 pcd_adsr_pos_w              rs.w    1 ; pos in adsr curve
 pcd_adsr_vol64_w            rs.w    1 ; some adsr volume
 
@@ -3179,7 +3177,7 @@ pre_PlayerTick:
         move.w  d3,pcd_out_lof_w(a5)
         move.l  a1,pcd_out_ptr_l(a5)
 
-        move.w  #1,pcd_inst_ping_pong_s_w(a5)
+        st      pcd_inst_ping_pong_dir_b(a5)
         moveq.l #0,d5
         move.b  wi_subloop_wait_b(a3),d5
         addq.w  #1,d5
@@ -3213,7 +3211,7 @@ pre_PlayerTick:
         move.w  pcd_inst_loop_offset_w(a5),d6
         cmp.w   d6,d5
         bhs.s   .inst_set_wave_ns_keep_pp
-        move.w  #1,pcd_inst_ping_pong_s_w(a5)
+        st      pcd_inst_ping_pong_dir_b(a5)
 .inst_set_wave_ns_keep_pp
         moveq.l #0,d5
         move.w  d5,pcd_inst_subloop_wait_w(a5)
@@ -3417,7 +3415,7 @@ pre_PlayerTick:
         move.w  d0,pcd_inst_subloop_wait_w(a5)
 
         move.w  d4,pcd_inst_loop_offset_w(a5)
-        move.w  #1,pcd_inst_ping_pong_s_w(a5)
+        st      pcd_inst_ping_pong_dir_b(a5)
 
 .inst_wave_selected
         cmpi.b  #$FF,d2
@@ -3561,143 +3559,133 @@ pre_PlayerTick:
         ENDC
 
 ; ----------------------------------------
-; wave looping (FIXME this needs some serious tidying)
+; wave loop pos advancing and pattern wave offset command handling
+
+        move.w  wi_subloop_len_w(a3),d3
+        beq     .wave_has_no_subloop
+        move.w  d3,pcd_out_len_w(a5)        ; FIXME can we move this to wave loading?
+
         move.w  wi_subloop_step_w(a3),d2
         moveq.l #0,d1
         move.b  pcd_wave_offset_b(a5),d1
-        ; FIXME can we merge this code path
-        move.w  wi_subloop_len_w(a3),d3
-        beq     .lbC000D8E
-
-        tst.b   d1
-        beq.s   .no_wave_offset
+        beq.s   .wave_with_subloop_but_no_wave_offset
         tst.b   wi_allow_9xx_b(a3)
-        beq.s   .no_wave_offset
+        beq.s   .wave_with_subloop_but_no_wave_offset
 
+        ; update loop offset from pattern
         lsl.w   #7,d1
-        move.w  d1,pcd_inst_loop_offset_w(a5)
+
         clr.b   pcd_wave_offset_b(a5)
 
-        move.w  pcd_inst_ping_pong_s_w(a5),d4
-        ble.s   .lbC001178
-        sub.w   d2,d1
-        bra.s   .lbC000486
+        ; keep current direction of ping-pong unchanged 
+        move.b  pcd_inst_ping_pong_dir_b(a5),d4
+        bpl.s   .wave_move_one_step_ahead
+        sub.w   d2,d1       ; go in reverse direction one step?
+        bra.s   .wave_submove_cont
+.wave_move_one_step_ahead
+        add.w   d2,d1       ; go in reverse direction one step?
+        bra.s   .wave_submove_cont
 
-.no_wave_offset
-        move.w  pcd_inst_subloop_wait_w(a5),d1
-        subq.w  #1,d1
-        bls.s   .lbC00110C
-        move.w  d1,pcd_inst_subloop_wait_w(a5)
+.wave_with_subloop_but_no_wave_offset
+        subq.w  #1,pcd_inst_subloop_wait_w(a5)
+        bgt.s   .wave_subloop_wait
 
+        ; subloop moves!
+        move.b  pcd_inst_ping_pong_dir_b(a5),d4
         move.w  pcd_inst_loop_offset_w(a5),d1
-        move.w  d3,pcd_out_len_w(a5)
-        move.w  d1,pcd_out_lof_w(a5)
-
-        ;moveq.l #0,d1
-        move.w  pcd_inst_wave_num_w(a5),d1
-        move.l  pv_wave_sample_table(a4,d1.w),pcd_out_ptr_l(a5)
-        bra     .loop_handling_done
-
-.lbC00110C
-        move.w  pcd_inst_ping_pong_s_w(a5),d4
-        move.w  pcd_inst_loop_offset_w(a5),d1
-        bra.s   .lbC00048A
-
-.lbC001178
-        add.w   d2,d1
-.lbC000486
-        move.w  d1,pcd_inst_loop_offset_w(a5)
-.lbC00048A
+.wave_submove_cont
+        ; reset subloop wait
         moveq.l #0,d5
-        move.b  wi_subloop_wait_b(a3),d5       ; FIXME why is this not increased by one here?
+        move.b  wi_subloop_wait_b(a3),d5        ; FIXME why is this not increased by one here?
         move.w  d5,pcd_inst_subloop_wait_w(a5)
-        tst.w   d4
-        ble.s   .lbC0010A0
-        add.w   d2,d1
-        move.w  d3,d4
-        add.w   d1,d4
+
+        tst.b   d4
+        bpl.s   .wave_is_moving_backwards
+        add.w   d2,d1                   ; increment offset in forward direction one step
+
+        move.w  d1,d4
+        add.w   d3,d4                   ; calculate next start of loop (curr start)
 
         move.w  wi_loop_end_w(a3),d2
-
         cmp.w   d1,d2
-        bhs.s   .is_not_past_loop_end
-        move.w  wi_chipram_w(a3),d2
+        bhs.s   .is_not_past_loop_end   ; are we starting playback past the end of the loop
+        move.w  wi_chipram_w(a3),d2     ; use sample end
 .is_not_past_loop_end
-        sub.w   d4,d2
-        bhi.s   .lbC0004C6
-        add.w   d2,d1
-        move.w  d1,pcd_inst_loop_offset_w(a5)
-        move.w  #-1,pcd_inst_ping_pong_s_w(a5)
-        move.w  d1,d4
+        sub.w   d4,d2                   ; space left = (max(loop end, sample end) - curr start)
+        bhi.s   .wave_new_loop_pos_fits ; max(loop end, sample end) > curr start?
+
+        add.w   d2,d1                   ; place offset at last possible place (loop_end - loop size)
+
+        clr.b   pcd_inst_ping_pong_dir_b(a5) ; mark going backwards
+        bra.s   .wave_loop_dir_changed
+
+.wave_is_moving_backwards
+        sub.w   d2,d1                   ; decrement offset in backward direction one step
+
+        move.w  wi_loop_start_w(a3),d4
+
+        move.w  d4,d2
+        sub.w   d1,d2                   ; calc how many bytes we are part front
+        bmi.s   .wave_new_loop_pos_fits
+
+.wave_hit_front_of_loop
+        move.w  d4,d1
+        st      pcd_inst_ping_pong_dir_b(a5)
+
+.wave_loop_dir_changed
         tst.w   d2
-        bne.s   .done_lof_calc
-        bra.s   .lbC000C66
+        bne.s   .wave_new_loop_pos_fits ; perfect fit for last loop
 
-.lbC0010A0
-        sub.w   d2,d1
+        ; partial fit only
+        subq.w  #1,pcd_inst_subloop_wait_w(a5)  ; why, oh why?
 
-        move.w  wi_loop_start_w(a3),d2
-
-        move.w  d2,d4
-        move.w  d2,d6
-        sub.w   d1,d6
-        bpl.s   .do_loop_forward
-.lbC0004C6
-        move.w  d1,pcd_inst_loop_offset_w(a5)
+.wave_new_loop_pos_fits
         move.w  d1,d4
+        move.w  d4,pcd_inst_loop_offset_w(a5)
         bra.s   .done_lof_calc
 
-.do_loop_forward
-        move.w  d2,pcd_inst_loop_offset_w(a5)
-        move.w  #1,pcd_inst_ping_pong_s_w(a5)
-        tst.w   d6
-        bne.s   .done_lof_calc
-.lbC000C66
-        subq.w  #1,d5
-        move.w  d5,pcd_inst_subloop_wait_w(a5)
-
+.wave_subloop_wait
+        move.w  pcd_inst_loop_offset_w(a5),d4
 .done_lof_calc
-        move.w  d3,pcd_out_len_w(a5)
         move.w  d4,pcd_out_lof_w(a5)
 
-        move.w  pcd_inst_wave_num_w(a5),d1
+        move.w  pcd_inst_wave_num_w(a5),d1  ; FIXME can we move this to wave loading?
         move.l  pv_wave_sample_table(a4,d1.w),pcd_out_ptr_l(a5)
         bra.s   .loop_handling_done
 
-        ; FIXME can we merge this code path with the one at lbC0004EA
-.lbC000D8E
-        tst.b   d1
+.wave_has_no_subloop
+        move.b  pcd_wave_offset_b(a5),d1
         beq.s   .loop_handling_done
         tst.b   wi_allow_9xx_b(a3)
         beq.s   .loop_handling_done
 
-        move.b  pcd_channel_mask_b(a5),d3
-        move.b  d3,pcd_out_trg_b(a5)
-        or.b    d3,pv_trigger_mask_w+1(a4)
+        ; apply offset from pattern for sample without subloop
+        lsl.w   #8,d1   ; clear upper byte
+        lsr.w   #1,d1
 
-        lsl.w   #7,d1
-        move.l  d1,d3
-
-        move.w  pcd_inst_wave_num_w(a5),d1
-        move.l  pv_wave_sample_table(a4,d1.w),d1
-
-        add.l   d3,d1
-        move.l  d1,pcd_out_ptr_l(a5)
-
-        move.w  wi_chipram_w(a3),d2
-        move.w  d2,d4
-        subq.w  #1,d4
-        sub.w   d3,d2
-        cmp.w   d3,d4
-        bgt.s   .is_not_oneshot
-        moveq.l #2,d2
-.is_not_oneshot
-        move.w  d2,pcd_out_len_w(a5)
-        move.w  #$FFFF,pcd_out_lof_w(a5)
         clr.b   pcd_wave_offset_b(a5)
 
-        ; position of merging code
-        ; FIXME can we merge this code path?
+        move.b  pcd_channel_mask_b(a5),d2   ; trigger output
+        move.b  d2,pcd_out_trg_b(a5)
+        or.b    d2,pv_trigger_mask_w+1(a4)
+
+        move.w  wi_chipram_w(a3),d2
+        sub.w   d1,d2
+        bgt.s   .waveoffset_is_not_past_end
+        moveq.l #2,d2
+        IFNE    PRETRACKER_BUGFIX_CODE
+        ; FIXME actually we should set the start address to the empty sample
+        ; FIXME (or at least to the beginning of the sample?) to avoid an audible glitch
+        moveq.l #0,d1
+        ENDC
+.waveoffset_is_not_past_end
+        move.w  d2,pcd_out_len_w(a5)
+
+        move.w  pcd_inst_wave_num_w(a5),d2
+        add.l   pv_wave_sample_table(a4,d2.w),d1
+        move.l  d1,pcd_out_ptr_l(a5)
+
+        ;move.w  #$FFFF,pcd_out_lof_w(a5)   ; this is already set to -1, no need to set it again
 .loop_handling_done
 
 ; ----------------------------------------
