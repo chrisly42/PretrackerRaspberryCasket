@@ -107,6 +107,8 @@ solve this problem.
 - Further optimized ADSR code
 - Optimized wave loop code
 - Bake in this strange vibrato speed multiplication to precalculated vibrato value (where possible)
+- Various small optimizations
+- Store instrument number * 4 on loading to avoid using two adds every frame
 
 ### V1.0 (26-Dec-22)
  

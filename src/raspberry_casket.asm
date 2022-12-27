@@ -449,7 +449,7 @@ pcd_pat_portamento_dest_w   rs.w    1 ; portamento destination pitch
 pcd_pat_pitch_slide_w       rs.w    1
 
 pcd_pat_vol_ramp_speed_b    rs.b    1
-pcd_pat_2nd_inst_num_b      rs.b    1
+pcd_pat_2nd_inst_num4_b     rs.b    1
 pcd_pat_2nd_inst_delay_b    rs.b    1
 pcd_wave_offset_b           rs.b    1
 
@@ -493,7 +493,7 @@ pcd_track_delay_steps_b     rs.b    1 ; $00 = no track delay, $ff = stop track d
 pcd_track_delay_vol16_b     rs.b    1
 pcd_track_init_delay_b      rs.b    1 ; number of frames to ignore the delay
 
-pcd_inst_num_w              rs.w    1 ; current instrument number (lower byte used)
+pcd_inst_num4_w             rs.w    1 ; current instrument number * 4
 ;pcd_inst_new_step_w         rs.w    1 ; seems to be unused
 pcd_inst_subloop_wait_w     rs.w    1
 pcd_inst_loop_offset_w      rs.w    1
@@ -502,8 +502,8 @@ pcd_inst_info_ptr           rs.l    1 ; pointer to currently active instrument
 pcd_waveinfo_ptr            rs.l    1 ; pointer to currently active waveinfo
 pcd_channel_mask_b          rs.b    1
 pcd_channel_num_b           rs.b    1
-pcd_adsr_phase_w            rs.w    1 ; 0=attack, 1=decay, 2=sustain, 3=release
-pcd_adsr_volume_w           rs.w    1 ; 0 for restart / $400 (word only)
+pcd_adsr_phase_w            rs.w    1 ; 0=attack, 1=decay, 2=sustain, 3=release ! do not change order
+pcd_adsr_volume_w           rs.w    1 ; 0 for restart / $400 (word only) ! do not change order
 pcd_adsr_phase_speed_b      rs.b    1
 pcd_inst_ping_pong_dir_b    rs.b    1 ; direction of ping-pong (-1 == $00 / +1 = $ff)
 pcd_adsr_pos_w              rs.w    1 ; pos in adsr curve
@@ -2356,7 +2356,7 @@ pre_PlayerTick:
 ; ----------------------------------------
 .handle_2nd_instrument
         moveq.l #0,d1
-        move.b  pcd_pat_2nd_inst_num_b(a5),d1
+        move.b  pcd_pat_2nd_inst_num4_b(a5),d1
         beq.s   .handle_current_instrument
 
         move.b  pcd_pat_2nd_inst_delay_b(a5),d3
@@ -2366,9 +2366,10 @@ pre_PlayerTick:
         bra.s   .handle_current_instrument
 
 .trigger_2nd_instrument
-        move.w  d1,pcd_inst_num_w(a5)
         move.b  d1,pcd_new_inst_num_b(a5)
-        lsl.w   #4,d1
+        move.w  d1,pcd_inst_num4_w(a5)
+        add.w   d1,d1
+        add.w   d1,d1
         lea     sv_inst_infos_table-uii_SIZEOF(a6),a1
         add.w   d1,a1
         move.l  a1,pcd_inst_info_ptr(a5)    ; loads 2nd instrument
@@ -2377,7 +2378,7 @@ pre_PlayerTick:
         moveq.l #0,d1
         move.l  a5,a1
         move.l  d1,(a1)+    ; pcd_pat_portamento_dest_w and pcd_pat_pitch_slide_w
-        move.l  d1,(a1)+    ; pcd_pat_vol_ramp_speed_b, pcd_pat_2nd_inst_num_b, pcd_pat_2nd_inst_delay_b, pcd_wave_offset_b
+        move.l  d1,(a1)+    ; pcd_pat_vol_ramp_speed_b, pcd_pat_2nd_inst_num4_b, pcd_pat_2nd_inst_delay_b, pcd_wave_offset_b
         move.l  d1,(a1)+    ; pcd_inst_pitch_slide_w and pcd_inst_sel_arp_note_w
         move.w  d1,(a1)+    ; pcd_inst_note_pitch_w
         addq.w  #2,a1
@@ -2536,13 +2537,15 @@ pre_PlayerTick:
 ; ----------------------------------------
 ; read out pattern editor data
 
+        moveq.l #0,d6                   ; clear arp flag
         move.b  pdb_pitch_ctrl(a0),d3   ; pitch and control byte
         bpl.s   .noselinst16plus
         add.w   #16,d4                  ; add high bit of instrument number
 .noselinst16plus
         moveq.l #$3f,d7
         and.w   d3,d7                   ; pitch
-        tst.w   d4
+        add.w   d4,d4
+        add.w   d4,d4
         beq.s   .no_new_note            ; if no instrument
         tst.w   d7
         bne.s   .no_new_note            ; if it has pitch
@@ -2550,17 +2553,16 @@ pre_PlayerTick:
         ; only change of instrument, not pitch
         move.b  pcd_loaded_inst_vol_b(a5),pcd_pat_vol_b(a5)
 
-        cmp.w   pcd_inst_num_w(a5),d4
+        cmp.w   pcd_inst_num4_w(a5),d4
         bne.s   .no_new_note
-        clr.w   pcd_adsr_phase_w(a5)   ; attack!
-        clr.w   pcd_adsr_volume_w(a5)
+        ; attack!
+        move.l   d6,pcd_adsr_phase_w(a5)   ; and pcd_adsr_volume_w
+        ;clr.w   pcd_adsr_volume_w(a5)
         ;move.b  #1,pcd_adsr_trigger_b(a5) ; never read
 
 .no_new_note
 
 ; d2 = effect cmd, d3 = pitch_ctrl, d4 = inst number, d5 = effect data, d7 = pitch
-
-        moveq.l #0,d6       ; clear arp flag
 
         andi.b  #$40,d3     ; ARP bit
         bne.s   .has_arp_note
@@ -2572,6 +2574,8 @@ pre_PlayerTick:
         beq.s   .no_effect
         moveq.l #15,d1      ; FIXME seems like it only supports the lower 15 instruments
         and.b   d5,d1
+        add.w   d1,d1
+        add.w   d1,d1
 
         tst.b   d7
         bne.s   .play_2nd_inst_without_trigger
@@ -2652,9 +2656,10 @@ pre_PlayerTick:
 .trigger_new_instrument
         move.w  d4,d1
 
-        move.w  d1,pcd_inst_num_w(a5)
         move.b  d1,pcd_new_inst_num_b(a5)
-        lsl.w   #4,d1
+        move.w  d1,pcd_inst_num4_w(a5)
+        add.w   d1,d1
+        add.w   d1,d1
         lea     sv_inst_infos_table-uii_SIZEOF(a6),a1
         add.w   d1,a1
         move.l  a1,pcd_inst_info_ptr(a5)
@@ -2663,7 +2668,7 @@ pre_PlayerTick:
         moveq.l #0,d1
         move.l  a5,a1
         move.l  d1,(a1)+    ; pcd_pat_portamento_dest_w and pcd_pat_pitch_slide_w
-        move.l  d1,(a1)+    ; pcd_pat_vol_ramp_speed_b, pcd_pat_2nd_inst_num_b, pcd_pat_2nd_inst_delay_b, pcd_wave_offset_b
+        move.l  d1,(a1)+    ; pcd_pat_vol_ramp_speed_b, pcd_pat_2nd_inst_num4_b, pcd_pat_2nd_inst_delay_b, pcd_wave_offset_b
         move.l  d1,(a1)+    ; pcd_inst_pitch_slide_w and pcd_inst_sel_arp_note_w
         move.l  d1,(a1)+    ; pcd_inst_note_pitch_w and pcd_inst_curr_port_pitch_w
 
@@ -2725,7 +2730,7 @@ pre_PlayerTick:
         ; FIXME can we move this code to avoid blocking the two registers d3/d5
         tst.b   d3
         beq.s   .has_no_second_inst
-        move.b  d3,pcd_pat_2nd_inst_num_b(a5)
+        move.b  d3,pcd_pat_2nd_inst_num4_b(a5)
         move.b  d5,d3
         lsr.b   #4,d3
         move.b  d3,pcd_pat_2nd_inst_delay_b(a5)
@@ -3070,9 +3075,7 @@ pre_PlayerTick:
         moveq.l #0,d3       ; flag for stitching -- if set, must not trigger new note
         ; enters with d4 = -1, meaning no first note pos yet
 
-        move.w  pcd_inst_num_w(a5),d1
-        add.w   d1,d1
-        add.w   d1,d1
+        move.w  pcd_inst_num4_w(a5),d1
         movea.l sv_inst_patterns_table-4(a6,d1.w),a0
 
         add.w   d0,a0
@@ -3165,7 +3168,7 @@ pre_PlayerTick:
 
         moveq.l #0,d3
         move.w  wi_loop_offset_w(a3),d6     ; is unlikely 32768
-        tst.w   wi_subloop_len_w(a3)
+        move.w  wi_subloop_len_w(a3),d5
         bne.s   .inst_set_wave_has_subloop
 
         adda.w  d6,a1                       ; add loop offset
@@ -3293,9 +3296,7 @@ pre_PlayerTick:
         moveq.l #-1,d4                      ; mark as no first stitch pos
         ENDC
 
-        move.w  pcd_inst_num_w(a5),d1
-        add.w   d1,d1
-        add.w   d1,d1
+        move.w  pcd_inst_num4_w(a5),d1
         movea.l sv_inst_patterns_table-4(a6,d1.w),a0
 
         add.w   d5,a0
@@ -3436,7 +3437,6 @@ pre_PlayerTick:
 
 ; expects d2 = inst num
 ; a5 = channel
-
         move.w  pcd_inst_vol_w(a5),d1
         tst.b   pcd_new_inst_num_b(a5)
         bne.s   .load_instrument
