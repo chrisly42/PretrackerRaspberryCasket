@@ -106,6 +106,7 @@ solve this problem.
 - Optimized base displacement by reordering variables
 - Further optimized ADSR code
 - Optimized wave loop code
+- Bake in this strange vibrato speed multiplication to precalculated vibrato value (where possible)
 
 ### V1.0 (26-Dec-22)
  

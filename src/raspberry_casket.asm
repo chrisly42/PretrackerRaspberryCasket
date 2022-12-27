@@ -793,8 +793,12 @@ pre_SongInit:
         move.b  pre_vib_depth_table-pre_vib_delay_table(a5,d1.w),uii_vibrato_depth+1(a4)
 
         move.b  (a0)+,d1                        ; ii_vibrato_speed
-        move.b  pre_vib_speed_table-pre_vib_delay_table(a5,d1.w),uii_vibrato_speed+1(a4)
+        move.b  pre_vib_speed_table-pre_vib_delay_table(a5,d1.w),d1
+        muls    uii_vibrato_depth(a4),d1        ; bake in this strange vibrato stuff
+        asr.w   #4,d1
+        move.w  d1,uii_vibrato_speed(a4)
 
+        moveq.l #0,d1
         move.b  (a0)+,d1                        ; ii_adsr_attack
         add.w   d1,d1
         lea     pre_fast_roll_off_16(pc),a5
@@ -2765,6 +2769,8 @@ pre_PlayerTick:
         move.b  (a1,d2.w),pcd_vibrato_depth_w+1(a5)
         lsr.b   #4,d5
         move.b  pre_vib_speed_table-pre_vib_depth_table(a1,d5.w),d2
+        muls    pcd_vibrato_depth_w(a5),d2
+        asr.w   #4,d2
         move.w  d2,pcd_vibrato_speed_w(a5)
         bra     .pat_play_cont
 
@@ -3709,19 +3715,10 @@ pre_PlayerTick:
         move.b  d1,pcd_vibrato_delay_w+1(a5)
         bne.s   .vibrato_still_delayed
 
-        ; activate vibrato
-        move.w  pcd_vibrato_depth_w(a5),d4
-        move.w  d4,d2
-        muls    pcd_vibrato_speed_w(a5),d2  ; i don't quite get this...
-        asr.w   #4,d2
-        move.w  d2,pcd_vibrato_speed_w(a5)
-        bra.s   .vibrato_cont_act
-
 .vibrato_already_active
         move.w  pcd_vibrato_speed_w(a5),d2
-        beq.s   .vibrato_still_delayed      ; no speed -- skip stuff
+        beq.s   .vibrato_disabled      ; no speed -- skip stuff
         move.w  pcd_vibrato_depth_w(a5),d4
-.vibrato_cont_act
         move.w  d2,d1
         add.w   pcd_vibrato_pos_w(a5),d1
         cmp.w   d1,d4
@@ -3738,9 +3735,11 @@ pre_PlayerTick:
 
         asr.w   #3,d1
         add.w   d1,d0
+.vibrato_disabled
 .vibrato_still_delayed
 
 ; ----------------------------------------
+; select right sample corresponding to current pitch
 
         move.w  pcd_out_len_w(a5),d3
         cmpi.w  #$219,d0
