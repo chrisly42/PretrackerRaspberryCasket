@@ -1,8 +1,10 @@
 ;--------------------------------------------------------------------
-; Raspberry Casket Player V1.0 (26-Dec-2022)
+; Raspberry Casket Player V1.0+ (27-Dec-2022)
 ; ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ;
 ; Provided by Chris 'platon42' Hodges <chrisly@platon42.de>
+;
+; Latest: https://github.com/chrisly42/PretrackerRaspberryCasket
 ;
 ; Rewritten by platon42/Desire based on a resourced, binary identical
 ; version of the original Pretracker V1.0 replayer binary provided
@@ -100,7 +102,8 @@
 ;
 ; Watch out for Presto, the LightSpeedPlayer variant that should
 ; solve this problem.
-
+;
+; Changelog see https://github.com/chrisly42/PretrackerRaspberryCasket#Changelog
 ;--------------------------------------------------------------------
 
 ; Here come the various options for you to configure.
@@ -411,13 +414,13 @@ uii_SIZEOF          rs.b    0
 ; MySong offsets
                         rsreset
 sv_waveinfo_table       rs.l    MAX_WAVES ; 24 pointers to wave infos to avoid mulu
+sv_inst_patterns_table  rs.l    MAX_INSTRUMENTS ; 32 pointers to pattern data
 sv_wavelength_table     rs.l    MAX_WAVES ; 24 longwords to sample lengths (standard octave) (NEW)
 sv_wavetotal_table      rs.l    MAX_WAVES ; 24 longwords to sample lengths for all octaves (NEW)
 sv_wavegen_order_table  rs.b    MAX_WAVES ; 24 bytes
 sv_num_waves_b          rs.b    1
 sv_num_steps_b          rs.b    1
 sv_patterns_ptr         rs.l    1
-sv_inst_patterns_table  rs.l    MAX_INSTRUMENTS ; 32 pointers to pattern data
 sv_curr_pat_pos_w       rs.w    1 ; only byte used FIXME why is this part of MySong? Should be in Player
 sv_pat_pos_len_w        rs.w    1 ; only byte used
 sv_pat_restart_pos_w    rs.w    1 ; only byte used
@@ -482,16 +485,14 @@ pcd_last_trigger_pos_w      rs.w    1 ; I think this makes sure that we don't re
 
 pcd_pat_portamento_speed_b  rs.b    1
 pcd_pat_adsr_rel_delay_b    rs.b    1 ; counts down until adsr release. Seems unused?
-pcd_new_inst_num_b          rs.b    1 ; load new instrument (number)
 pcd_note_off_delay_b        rs.b    1 ; time before note is released ($ff = disabled)
+pcd_inst_pattern_steps_b    rs.b    1 ; number of steps in instrument pattern
 
 pcd_note_delay_b            rs.b    1 ; $ff = no note delay
 pcd_track_delay_steps_b     rs.b    1 ; $00 = no track delay, $ff = stop track delay (this is for the next channel!)
 pcd_track_delay_vol16_b     rs.b    1
 pcd_track_init_delay_b      rs.b    1 ; number of frames to ignore the delay
 
-pcd_inst_pattern_steps_b    rs.b    1 ; number of steps in instrument pattern
-                            rs.b    1
 pcd_inst_num_w              rs.w    1 ; current instrument number (lower byte used)
 ;pcd_inst_new_step_w         rs.w    1 ; seems to be unused
 pcd_inst_ping_pong_s_w      rs.w    1 ; direction of pingpong (-1 / +1)
@@ -510,6 +511,8 @@ pcd_adsr_phase_speed_b      rs.b    1
 pcd_adsr_pos_w              rs.w    1 ; pos in adsr curve
 pcd_adsr_vol64_w            rs.w    1 ; some adsr volume
 
+pcd_new_inst_num_b          rs.b    1 ; load new instrument (number) ! do not change order
+                            rs.b    1 ; gets cleared
 pcd_vibrato_pos_w           rs.w    1 ;
 pcd_vibrato_delay_w         rs.w    1 ; is a byte value ! do not change order
 pcd_vibrato_depth_w         rs.w    1 ; is a byte value ! do not change order
@@ -1112,16 +1115,17 @@ pre_PlayerInit:
         move.b  d1,pv_wg_curr_wave_num_b(a4)
         ENDC
         lsl.w   #2,d1
-        lea     sv_wavelength_table(a6,d1.w),a6
+        move.l  pv_wave_sample_table(a4,d1.w),a0
+        move.l  a0,pv_wg_curr_sample_ptr(a4)
+
+        add.w   #sv_wavelength_table,d1
+        adda.w  d1,a6
         move.l  sv_wavelength_table-sv_wavelength_table(a6),d0
         move.w  d0,pv_wg_curr_sample_len_w(a4)
         IFNE    PRETRACKER_PROGRESS_SUPPORT
         move.l  sv_wavetotal_table-sv_wavelength_table(a6),pv_precalc_sample_size(a4)
         ENDC
         move.l  sv_waveinfo_table-sv_wavelength_table(a6),a3
-
-        move.l  pv_wave_sample_table(a4,d1.w),a0
-        move.l  a0,pv_wg_curr_sample_ptr(a4)
 
         ; clear sample data (a0 and d0 from above)
         bsr     pre_MemClr
@@ -2093,8 +2097,9 @@ pre_PlayerInit:
         ENDC
 
         lsl.w   #2,d0
-        move.l  sv_wavelength_table(a6,d0.w),d3
         move.l  pv_wave_sample_table(a4,d0.w),a1
+        add.w   #sv_wavelength_table,d0
+        move.l  (a6,d0.w),d3
 
         move.w  pv_wg_curr_sample_len_w(a4),d4 ; length of the sample to mix to
         cmp.w   d3,d4
@@ -2768,7 +2773,7 @@ pre_PlayerTick:
 ; ----------------------------------------
 .pat_set_track_delay
         cmp.b   #NUM_CHANNELS-1,pcd_channel_num_b(a5)
-        beq.s   .pat_play_cont  ; we are at channel 3 -- track delay not available here
+        beq     .pat_play_cont  ; we are at channel 3 -- track delay not available here
 
         lea     pcd_SIZEOF+pcd_track_delay_buffer+ocd_volume(a5),a1
         moveq.l #MAX_TRACK_DELAY-1,d2
@@ -2998,6 +3003,7 @@ pre_PlayerTick:
 ; a4: pv
 ; a5: channel struct
 ; a6: mysong struct
+
 .inst_pattern_processing
         lea     pv_channeldata(a4),a5
 
@@ -3039,7 +3045,6 @@ pre_PlayerTick:
         moveq.l #0,d0
         move.w  d0,pcd_inst_pitch_slide_w(a5)
         move.b  d0,pcd_inst_vol_slide_b(a5)
-        moveq.l #-1,d4
 
 ;        IFNE    PRETRACKER_PARANOIA_MODE ; new step is never written
 ;        move.w  pcd_inst_new_step_w(a5),d1
@@ -3049,13 +3054,14 @@ pre_PlayerTick:
 ;        moveq.l #$20,d1
 ;.inst_good_new_step_pos
 ;        move.b  d1,pcd_inst_step_pos_b(a5)
-;        move.w  d4,pcd_inst_new_step_w(a5)
+;        move.w  #$ffff,pcd_inst_new_step_w(a5)
 ;.inst_no_new_step_pos
 ;        ENDC
         move.b  pcd_inst_step_pos_b(a5),d0
         cmp.b   pcd_inst_pattern_steps_b(a5),d0
         bhs     .inst_pat_loop_exit
 
+        moveq.l #-1,d4
         moveq.l #0,d7
         moveq.l #0,d3       ; flag for stitching -- if set, must not trigger new note
         ; enters with d4 = -1, meaning no first note pos yet
@@ -3063,8 +3069,7 @@ pre_PlayerTick:
         move.w  pcd_inst_num_w(a5),d1
         add.w   d1,d1
         add.w   d1,d1
-        add.w   #sv_inst_patterns_table,d1
-        movea.l -4(a6,d1.w),a0
+        movea.l sv_inst_patterns_table-4(a6,d1.w),a0
 
         add.w   d0,a0
         add.w   d0,a0
@@ -3237,7 +3242,7 @@ pre_PlayerTick:
 
 .inst_adsr_release
         move.w  pcd_adsr_volume_w(a5),d5
-        asr.w   #6,d5       ; FIXME lsr?
+        asr.w   #6,d5
         move.w  d5,pcd_adsr_vol64_w(a5)
         moveq.l #16,d6
         move.w  d6,pcd_adsr_pos_w(a5)
@@ -3287,8 +3292,7 @@ pre_PlayerTick:
         move.w  pcd_inst_num_w(a5),d1
         add.w   d1,d1
         add.w   d1,d1
-        add.w   #sv_inst_patterns_table,d1
-        movea.l -4(a6,d1.w),a0
+        movea.l sv_inst_patterns_table-4(a6,d1.w),a0
 
         add.w   d5,a0
         add.w   d5,d5
@@ -3423,7 +3427,6 @@ pre_PlayerTick:
 
 .inst_no_inst_active
 .inst_pat_loop_exit3
-        move.w  wi_subloop_len_w(a3),d3
 
 ; ----------------------------------------
 
@@ -3431,11 +3434,65 @@ pre_PlayerTick:
 ; a5 = channel
 
         move.w  pcd_inst_vol_w(a5),d1
-        moveq.l #0,d2
-        move.b  pcd_new_inst_num_b(a5),d2
-        beq.s   .dont_load_instrument
+        tst.b   pcd_new_inst_num_b(a5)
+        bne.s   .load_instrument
 
-.loadinstrument
+.dont_load_instrument
+        move.w  pcd_adsr_volume_w(a5),d2
+        move.w  pcd_adsr_phase_w(a5),d4
+        beq.s   .adsr_attack
+        subq.w  #1,d4
+        move.w  d4,d3
+        beq.s   .adsr_decay_and_release ; we destinguish via d3 == 0 -> decay
+        subq.w  #1,d4
+        beq     .adsr_sustain
+
+.adsr_release
+        move.w  pcd_adsr_pos_w(a5),d4
+        add.w   pcd_adsr_vol64_w(a5),d4
+        move.w  d4,pcd_adsr_pos_w(a5)
+        sub.w   #16,d4
+        blt.s   .adsr_done
+        move.w  d4,pcd_adsr_pos_w(a5)
+
+        ; same code for both release and decay
+.adsr_decay_and_release
+        moveq.l #0,d4
+        move.b  pcd_adsr_phase_speed_b(a5),d4
+        cmpi.b  #$8f,d4
+        bhs.s   .adsr_absurd_slow_release
+        move.b  d4,d5
+        addq.b  #1,d5
+        add.w   d4,d4
+        lea     pre_roll_off_table(pc),a1
+        move.w  (a1,d4.w),d4
+        bra.s   .adsr_release_cont
+
+.adsr_absurd_slow_release
+        moveq.l #2,d4           ; FIXME I guess this should be 1, if I look at the roll-off table
+        moveq.l #-$71,d5        ; same as $8f, we only need the byte
+.adsr_release_cont
+        move.b  d5,pcd_adsr_phase_speed_b(a5)
+
+        tst.w   d3
+        beq.s   .adsr_is_actually_decay
+
+        sub.w   d4,d2
+        bpl.s   .adsr_done
+        moveq.l #0,d2
+        bra.s   .adsr_done
+
+.adsr_is_actually_decay
+        sub.w   d4,d2
+
+        cmp.w   uii_adsr_sustain(a2),d2
+        bgt.s   .adsr_done
+.adsr_enter_sustain
+        move.w  #2,pcd_adsr_phase_w(a5)
+        move.w  uii_adsr_sustain(a2),d2
+        bra.s   .adsr_done
+
+.load_instrument
         move.b  d1,pcd_loaded_inst_vol_b(a5)
         move.l  uii_vibrato_delay(a2),pcd_vibrato_delay_w(a5)  ; and uii_vibrato_depth
         ;move.w  uii_vibrato_delay(a2),pcd_vibrato_delay_w(a5)
@@ -3450,94 +3507,24 @@ pre_PlayerTick:
         ;move.w  d2,pcd_adsr_phase_w(a5)
         ;move.w  d2,pcd_adsr_volume_w(a5)
 
-        move.w  d2,pcd_vibrato_pos_w(a5)
-        move.b  d2,pcd_new_inst_num_b(a5)
+        move.l  d2,pcd_new_inst_num_b(a5)   ; and pcd_vibrato_pos_w
 
 .adsr_attack
         add.w   uii_adsr_attack(a2),d2
         cmpi.w  #MAX_VOLUME<<4,d2
-        blt     .adsr_done
+        blt.s   .adsr_done
 
 .adsr_do_decay
         move.w  #MAX_VOLUME<<4,d2
         move.w  #1,pcd_adsr_phase_w(a5)
         move.b  uii_adsr_decay+1(a2),pcd_adsr_phase_speed_b(a5)
-        bra     .adsr_done
 
-.dont_load_instrument
-        move.w  pcd_adsr_volume_w(a5),d2
-        move.w  pcd_adsr_phase_w(a5),d4
-        beq.s   .adsr_attack
-        subq.w  #1,d4
-        beq.s   .adsr_decay
-        subq.w  #1,d4
-        beq     .adsr_sustain
-
-.adsr_release
-        move.w  pcd_adsr_pos_w(a5),d4
-        add.w   pcd_adsr_vol64_w(a5),d4
-        move.w  d4,pcd_adsr_pos_w(a5)
-        cmpi.w  #15,d4
-        ble.s   .adsr_sustain
-
-        ; release?
-        moveq.l #0,d5
-        move.b  pcd_adsr_phase_speed_b(a5),d5
-        cmpi.b  #$8E,d5
-        bhi.s   .lbC001142
-        addq.b  #1,pcd_adsr_phase_speed_b(a5)
-
-        add.w   d5,d5
-        lea     pre_roll_off_table(pc),a1
-        move.w  (a1,d5.w),d5
-        bra.s   .lbC001148
-
-.adsr_decay
-        moveq.l #0,d4
-        move.b  pcd_adsr_phase_speed_b(a5),d4
-        cmpi.b  #$8E,d4
-        bhi.s   .adsr_absurd_long_decay
-        move.b  d4,d5
-        addq.b  #1,d5
-        add.w   d4,d4
-        lea     pre_roll_off_table(pc),a1
-        move.w  (a1,d4.w),d4
-        bra.s   .adsr_decay_cont
-.adsr_absurd_long_decay
-        moveq.l #2,d4           ; FIXME I guess this should be 1, if I look at the roll-off table
-        moveq.l #-$71,d5
-.adsr_decay_cont
-        move.b  d5,pcd_adsr_phase_speed_b(a5)
-        sub.w   d4,d2
-        move.w  d2,d4
-        move.w  uii_adsr_sustain(a2),d2
-        cmp.w   d4,d2
-        bge.s   .adsr_enter_sustain
-        move.w  d4,d2
-        bra.s   .adsr_done
-
-.adsr_enter_sustain
-        move.w  #2,pcd_adsr_phase_w(a5)
-        bra.s   .adsr_done
-
-.lbC001142
-        moveq.l #2,d5
-        move.b  #-$71,pcd_adsr_phase_speed_b(a5)
-.lbC001148
-        sub.w   d5,d2
-        bpl.s   .adsr_noclip_vol
-        moveq.l #0,d2
-.adsr_noclip_vol
-        sub.w   #16,d4
-        move.w  d4,pcd_adsr_pos_w(a5)
 .adsr_sustain
 
 .adsr_done
         move.w  d2,pcd_adsr_volume_w(a5)
-        lsr.w   #4,d2
 
-; ----------------------------------------
-; return from .loadinstrument
+        ; handle note cut-off command (EAx command)
         move.b  pcd_note_off_delay_b(a5),d4
         beq.s   .dont_release_note
         subq.b  #1,d4
@@ -3548,18 +3535,24 @@ pre_PlayerTick:
         move.w  #3,pcd_adsr_phase_w(a5)
 
 .dont_release_note
+
+; ----------------------------------------
+; calculate final volume output = inst_vol * ADSR volume * pattern volume 
+
         IFNE    PRETRACKER_VOLUME_TABLE
         lea     pv_volume_table(a4),a1
-        lsl.w   #7,d2
+        lsl.w   #3,d2
+        and.w   #127<<7,d2
         or.b    d1,d2
         move.b  (a1,d2.w),d1
         lsl.w   #7,d1
         or.b    pcd_pat_vol_b(a5),d1
         move.b  (a1,d1.w),pcd_out_vol_b(a5)
         ELSE
+        lsr.w   #4,d2
         mulu    d2,d1
         lsr.w   #6,d1
-
+        
         moveq.l #0,d2
         move.b  pcd_pat_vol_b(a5),d2
         mulu    d1,d2
@@ -3569,12 +3562,11 @@ pre_PlayerTick:
 
 ; ----------------------------------------
 ; wave looping (FIXME this needs some serious tidying)
-
         move.w  wi_subloop_step_w(a3),d2
         moveq.l #0,d1
         move.b  pcd_wave_offset_b(a5),d1
         ; FIXME can we merge this code path
-        tst.w   d3
+        move.w  wi_subloop_len_w(a3),d3
         beq     .lbC000D8E
 
         tst.b   d1

@@ -99,3 +99,13 @@ about 34 on average!).
 
 Watch out for *Presto*, the [LightSpeedPlayer](https://github.com/arnaud-carre/LSPlayer) variant that should
 solve this problem.
+
+## Changelog
+
+### V1.1 (unreleased)
+- Optimized base displacement by reordering variables
+- Further optimized ADSR code
+
+### V1.0 (26-Dec-22)
+ 
+- Initial release
