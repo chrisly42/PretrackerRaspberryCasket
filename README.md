@@ -119,7 +119,8 @@ solve this problem.
 - Store instrument number * 4 on loading to avoid using two adds every frame
 - Optimized speed/shuffle code. Idea of using xor turned out to make things too complicated for pattern breaks/jumps.
 - Rearranged code for more short branches.
-- Drop-in replacement code size: 6324 bytes.
+- Optimized track delay code further.
+- Drop-in replacement code size: 6304 bytes.
 
 ### V1.0 (26-Dec-22)
  

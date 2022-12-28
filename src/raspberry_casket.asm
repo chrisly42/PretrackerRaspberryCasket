@@ -3872,31 +3872,34 @@ pre_PlayerTick:
 ; ----------------------------------------
 ; track delay handling
 
-        move.b  pcd_track_delay_steps_b(a5),d0
-        beq     .incrementchannel      ; no track delay
+        move.b  pcd_track_delay_steps_b(a5),d3
+        beq     .incrementchannel       ; no track delay
 
         cmp.b   #NUM_CHANNELS-1,pcd_channel_num_b(a5)   ; last channel processed?
-        beq     .updatechannels        ; no track delay for last channel
+        beq     .updatechannels         ; no track delay for last channel
 
+        moveq.l #MAX_TRACK_DELAY-1,d0   ; load from last buffer
+        
         ; handle track delay
-        cmpi.b  #$FF,d0
+        cmpi.b  #$FF,d3
         beq.s   .clear_track_delay
 
         ; advance and wrap offset
         move.b  pcd_SIZEOF+pcd_track_delay_offset_b(a5),d1
         addq.b  #1,d1
-        andi.w  #$1F,d1
+        and.w   d0,d1
         move.b  d1,pcd_SIZEOF+pcd_track_delay_offset_b(a5)
 
         move.w  d1,d2
+        lea     pcd_SIZEOF(a5),a3
         lsl.w   #4,d2
-        lea     (a5,d2.w),a1
-        lea     pcd_SIZEOF+pcd_track_delay_buffer(a1),a3
-        move.l  pcd_out_base+0(a5),(a3)+   ; ocd_sam_ptr
-        move.l  pcd_out_base+4(a5),(a3)+   ; ocd_length/ocd_loop_offset
-        move.l  pcd_out_base+8(a5),(a3)+   ; ocd_period/ocd_volume/ocd_trigger
-        ;move.l   pcd_out_base+12(a5),(a3)+ ; this is never used
-
+        lea     pcd_track_delay_buffer(a3,d2.w),a3
+        lea     pcd_out_base(a5),a1
+        move.l  (a1)+,(a3)+             ; ocd_sam_ptr
+        move.l  (a1)+,(a3)+             ; ocd_length/ocd_loop_offset
+        move.l  (a1)+,(a3)+             ; ocd_period/ocd_volume/ocd_trigger
+        ;move.l  (a1)+,(a3)+             ; this is never used
+        
         move.b  -(a3),d2
         add.b   d2,d2               ; increment channel
         bne.s   .copy_trigger_for_delayed_channel
@@ -3913,26 +3916,22 @@ pre_PlayerTick:
         move.w  (sp)+,d4
         clr.b   d4
         add.w   d4,d4
-        move.b  -(a3),d4           ; ocd_volume
+        move.b  -(a3),d4            ; ocd_volume
         move.b  (a1,d4.w),(a3)+
         ELSE
         moveq.l #0,d4
-        move.b  -(a3),d4           ; ocd_volume
+        move.b  -(a3),d4            ; ocd_volume
         move.b  pcd_track_delay_vol16_b(a5),d2
         ext.w   d2
-        mulu    d4,d2              ; apply track delay volume
+        mulu    d4,d2               ; apply track delay volume
         lsr.w   #4,d2
-        move.b  d2,(a3)+           ; fix volume
+        move.b  d2,(a3)+            ; fix volume
         ENDC
 
-        move.b  d0,pcd_SIZEOF+pcd_track_delay_steps_b(a5)
+        move.b  d3,pcd_SIZEOF+pcd_track_delay_steps_b(a5)
 
-        sub.b   d0,d1
-        bpl.s   .no_wrap_trd_pos
-        addi.b  #$20,d1
-.no_wrap_trd_pos
-        move.b  d1,d0
-        ext.w   d0
+        sub.b   d3,d1
+        and.w   d1,d0
 
         IFNE    PRETRACKER_DUBIOUS_PITCH_SHIFT_FOR_DELAYED_TRACK
         moveq.l #7,d4
@@ -3950,20 +3949,17 @@ pre_PlayerTick:
         move.b  d1,pcd_SIZEOF+pcd_track_delay_steps_b(a5)
         st      pcd_SIZEOF+pcd_track_delay_offset_b(a5)
 
-        moveq.l #$1f,d0    ; load from last buffer
-
 .load_track_data_from_buffer
-        lea     pcd_SIZEOF(a5),a5    ; skip the channel we applied track delay to
+        lea     pcd_SIZEOF(a5),a5       ; skip the channel we applied track delay to
         lsl.w   #4,d0
-        lea     (a5,d0.w),a0
+        lea     pcd_track_delay_buffer(a5,d0.w),a1
         lea     pcd_out_base(a5),a3
-        lea     pcd_track_delay_buffer(a0),a1
-        move.l  (a1)+,(a3)+
-        move.l  (a1)+,(a3)+
-        move.l  (a1)+,(a3)+
+        move.l  (a1)+,(a3)+             ; ocd_sam_ptr
+        move.l  (a1)+,(a3)+             ; ocd_length/ocd_loop_offset
+        move.l  (a1)+,(a3)+             ; ocd_period/ocd_volume/ocd_trigger
         ;move.l   (a1)+,(a3)+            ; this is never used
 
-        clr.b   pcd_track_delay_buffer+ocd_volume(a0)
+        ;clr.b   ocd_volume-ocd_unused(a1) ; does not seem to bother
 
         IFNE     PRETRACKER_DUBIOUS_PITCH_SHIFT_FOR_DELAYED_TRACK
         ; FIXME this seems odd! Why modulate the period by the distance?
