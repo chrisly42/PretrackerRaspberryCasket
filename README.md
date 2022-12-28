@@ -1,7 +1,7 @@
 # Raspberry Casket
 A fast and small open source Pretracker replayer
 
-## Raspberry Casket Player V1.0 (26-Dec-2022)
+## Raspberry Casket Player V1.1 (28-Dec-2022)
 
 Provided by Chris 'platon42' Hodges <chrisly@platon42.de>
 
@@ -83,11 +83,14 @@ The original code compressed with *Blueberry's* Shrinkler goes from
 18052 bytes down to 9023 bytes.
 
 Raspberry Casket, depending on the features compiled in, is about
-6374 bytes and goes down to ~4410 bytes (in isolation).
+6216 bytes and goes down to ~4348 bytes (in isolation).
 
 So this means that the optimization is not just "on the outside".
 
 ### Timing
+
+Sample generation is a bit faster (I guess around 10-15%), but most of the time is spent on muls operations, so this is the limiting factor.
+Raspberry Casket is about twice as fast as the old replayer for playback.
 
 Unfortunately, the replayer is still pretty slow and has high
 jitter compared to other standard music replayers.
@@ -103,24 +106,30 @@ solve this problem.
 ### Known issues
 
 - Behaviour for undefined volume slides with both up- and down nibble specified is different (e.g. A9A, hi Rapture!). Don't do that.
-- Don't use loops with odd lengths and offsets.
+- Don't use loops with odd lengths and offsets (even if Pretracker allows this when dragging the loop points).
 - Don't stop the music with F00 and use a note delay (EDx) in the same line.
 - Don't try to play music with no waves, instruments or patterns.
-- Shinobi seemed to have used an early beta version of Pretracker where it was possible to specify a Subloop Wait of 0. That's illegal.
+- Pattern breaks with target row >= $7f will be ignored.
+- Shinobi seemed to have used an early beta version of Pretracker where it was possible to specify a Subloop Wait of 0. That's illegal and unsupported.
+- Pattern break (Dxx) + Song pos (Bxx) on the same line does not work in original Pretracker & Player: New Dxx position is ignored. 
+  There is code to enable it in the player, so you could in theory make backwards running tracks like in Protracker. 
+  But this doesn't make sense as long as the tracker itself does not support it.
 
 ## Changelog
 
-### V1.1 (unreleased)
-- Optimized base displacement by reordering variables
-- Further optimized ADSR code
-- Optimized wave loop code
-- Bake in this strange vibrato speed multiplication to precalculated vibrato value (where possible)
-- Various small optimizations
-- Store instrument number * 4 on loading to avoid using two adds every frame
+### V1.1 (28-Dec-22)
+- Optimized base displacement by reordering variables.
+- Further optimized ADSR code.
+- Optimized wave loop code.
+- Bake in this strange vibrato speed multiplication to precalculated vibrato value (where possible).
+- Various small optimizations.
+- Store instrument number * 4 on loading to avoid using two adds every frame.
 - Optimized speed/shuffle code. Idea of using xor turned out to make things too complicated for pattern breaks/jumps.
 - Rearranged code for more short branches.
 - Optimized track delay code further.
-- Drop-in replacement code size: 6304 bytes.
+- Optimized pattern / song advance code.
+- Maximum jitter now about one rasterline less, average about 0.5 rasterlines less (measurements, your mileage may vary).
+- Drop-in replacement code size: 6228 bytes.
 
 ### V1.0 (26-Dec-22)
  

@@ -1,6 +1,6 @@
 ;--------------------------------------------------------------------
-; Raspberry Casket Player V1.1beta (28-Dec-2022)
-; ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+; Raspberry Casket Player V1.1 (28-Dec-2022)
+; ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ;
 ; Provided by Chris 'platon42' Hodges <chrisly@platon42.de>
 ;
@@ -87,15 +87,22 @@
 ; 18052 bytes down to 9023 bytes.
 ;
 ; Raspberry Casket, depending on the features compiled in, is about
-; 6374 bytes and goes down to ~4410 bytes (in isolation).
+; 6216 bytes and goes down to ~4348 bytes (in isolation).
 ;
 ; So this means that the optimization is not just "on the outside".
 ;
 ; Timing
 ; ~~~~~~
+; Sample generation is a bit faster (I guess around 10-15%), but most
+; of the time is spent on muls operations, so this is the limiting
+; factor.
+;
+; Raspberry Casket is about twice as fast as the old replayer for
+; playback.
+;
 ; Unfortunately, the replayer is still pretty slow and has high
 ; jitter compared to other standard music replayers.
-; This means it may take up to 33 raster lines (14-19 on average)
+; This means it may take up to 32 raster lines (13-18 on average)
 ; which is significant more than a standard Protracker replayer
 ; (the original one could take about 60 raster lines worst case and
 ; about 34 on average!).
@@ -639,7 +646,7 @@ pre_FuncTable
         dc.l     pre_PlayerInit-pre_FuncTable
         dc.l     pre_PlayerTick-pre_FuncTable
         ENDC
-        ;dc.b     '$VER: Raspberry Casket 1.0',0
+        ;dc.b     '$VER: Raspberry Casket 1.1',0
         ;even
 
         IFNE    PRETRACKER_COPPER_OUTPUT
@@ -2906,29 +2913,66 @@ pre_PlayerTick:
 ; end of pattern loop
 
 ; ----------------------------------------
-; pattern advancing FIXME try to figure out all the cases
+; Pattern advancing and pattern break and jump handling. Song looping and song-end detection.
 .pattern_advancing
         subq.b  #1,pv_pat_line_ticks_b(a4)
         bne     .no_pattern_advance
 
         ; clear note delay info
-        moveq.l #0,d1
+        moveq.l #0,d0
         REPT    NUM_CHANNELS
-        move.b  d1,pv_channeldata+pcd_note_delay_b+REPTN*pcd_SIZEOF(a4)
+        move.b  d0,pv_channeldata+pcd_note_delay_b+REPTN*pcd_SIZEOF(a4)
         ENDR
 
-        move.b  sv_num_steps_b(a6),d1
-        subq.b  #1,d1
-        move.b  pv_next_pat_row_b(a4),d0
-        blt.s   .no_pattern_break
-        cmp.b   d0,d1
-        bgt.s   .has_legal_break_pos
-        move.b  d1,d0                       ; limit to last step
-.has_legal_break_pos
-        move.b  d0,pv_pat_curr_row_b(a4)
+        move.b  sv_num_steps_b(a6),d1       ; number of steps in pattern
 
-        move.w  sv_curr_pat_pos_w(a6),d3    ; go to next pattern pos
-        addq.w  #1,d3
+        move.b  pv_pat_curr_row_b(a4),d0
+        addq.b  #1,d0                       ; normal step increment
+
+        move.w  sv_curr_pat_pos_w(a6),d3    ; current song position
+
+        move.b  pv_next_pat_row_b(a4),d2    ; $ff means no pattern break
+        bmi.s   .no_pattern_break
+        st      pv_next_pat_row_b(a4)       ; processed break, set to $ff
+        move.b  d2,d0
+        IFNE    0 ; PRETRACKER_BUGFIX_CODE  ; currently disabled to keep old behaviour
+        moveq.l #0,d2                       ; clear mask
+        ENDC
+        cmp.b   d1,d0
+        blo.s   .has_legal_break_pos
+        move.b  d1,d0                       ; limit to last step
+        subq.b  #1,d0
+        bra.s   .has_legal_break_pos
+
+.no_pattern_break
+        cmp.b   d1,d0
+        blo.s   .pattern_end_not_reached
+        moveq.l #0,d0
+        IFNE    PRETRACKER_PARANOIA_MODE
+        move.b  pv_loop_pattern_b(a4),d0    ; keep same pattern rolling?
+        bne.s   .pattern_end_not_reached
+        ENDC
+.has_legal_break_pos
+        addq.w  #1,d3                       ; pattern break will increment song pos -- if there is no new pattern position
+
+.pattern_end_not_reached
+        move.b  pv_next_pat_pos_b(a4),d4
+        bmi.s   .no_new_position            ; has a new pattern position
+        st      pv_next_pat_pos_b(a4)
+        IFNE    PRETRACKER_SONG_END_DETECTION
+        cmp.b   d4,d3
+        bgt.s   .no_backjump
+        st      pv_songend_detected_b(a4)   ; detect jumping back
+.no_backjump
+        ENDC
+        move.b  d4,d3                       ; load new position
+        IFNE    0 ; PRETRACKER_BUGFIX_CODE  ; currently disabled to keep old behaviour
+        not.b   d2
+        and.b   d2,d0                       ; if we had NO pattern break, we will clear d0
+        ELSE
+        moveq.l #0,d0
+        ENDC
+.no_new_position
 
         cmp.w   sv_pat_pos_len_w(a6),d3
         blt.s   .no_restart_song
@@ -2937,87 +2981,15 @@ pre_PlayerTick:
         st      pv_songend_detected_b(a4)
         ENDC
 .no_restart_song
-        move.w  d3,sv_curr_pat_pos_w(a6)
-
-        st      pv_next_pat_row_b(a4)       ; processed break, set to $ff
-
-        move.b  pv_next_pat_pos_b(a4),d3
-        bge.s   .has_new_position           ; has a new pattern position together with a break
-        move.b  d0,d2                       ; backup pv_pat_curr_row_b
-        cmp.b   d0,d1
-        ble.s   .end_of_pattern_reached
-        bra.s   .done_pat_advance
-
-.no_pattern_break
-        move.b  pv_next_pat_pos_b(a4),d3
-        bge.s   .has_new_position
-        move.b  pv_pat_curr_row_b(a4),d0
-        move.b  d0,d2
-        cmp.b   d1,d2
-        blt.s   .advancetonextpos
-
-.end_of_pattern_reached
-        clr.b   pv_pat_curr_row_b(a4)
-        IFNE    PRETRACKER_PARANOIA_MODE
-        move.b  pv_loop_pattern_b(a4),d0    ; keep same pattern rolling?
-        bne     .done_pat_advance
-        ENDC
-        bra.s   .advance_song_pos
-
-.advancetonextpos
-        addq.b  #1,d2
-        move.b  sv_num_steps_b(a6),d1
-        addq.b  #1,d0
-        cmp.b   d2,d1
-        bgt.s   .dont_go_to_top_row
-        moveq.l #0,d0
-.dont_go_to_top_row
         move.b  d0,pv_pat_curr_row_b(a4)
-        bra.s   .done_pat_advance
-
-.has_new_position
-        clr.b   pv_pat_curr_row_b(a4)
-        IFNE    PRETRACKER_PARANOIA_MODE
-        move.b  pv_loop_pattern_b(a4),d0
-        bne     .no_restart_song_after_jump
-        ENDC
-
-        cmp.w   sv_pat_pos_len_w(a6),d3
-        blt.s   .set_song_pos2
-        move.w  sv_pat_restart_pos_w(a6),d3
-        IFNE    PRETRACKER_SONG_END_DETECTION
-        st      pv_songend_detected_b(a4)
-        ENDC
-.set_song_pos2
         move.w  d3,sv_curr_pat_pos_w(a6)
-        ; enters with d0 = 0
-.no_restart_song_after_jump
-        st      pv_next_pat_pos_b(a4)       ; processed jump, set to $ff
 
-        subq.b  #1,d2
-        bhi.s   .done_pat_advance
-        clr.b   pv_pat_curr_row_b(a4)
-        tst.b   d0
-        bne.s   .done_pat_advance
-
-.advance_song_pos
-        move.w  sv_curr_pat_pos_w(a6),d0
-        addq.w  #1,d0
-        cmp.w   sv_pat_pos_len_w(a6),d0
-        blt.s   .set_song_pos
-        move.w  sv_pat_restart_pos_w(a6),d0
-        IFNE    PRETRACKER_SONG_END_DETECTION
-        st      pv_songend_detected_b(a4)
-        ENDC
-.set_song_pos
-        move.w  d0,sv_curr_pat_pos_w(a6)
-.done_pat_advance
-        move.b  pv_pat_speed_even_b(a4),d0
-        btst    #0,pv_pat_curr_row_b(a4)
-        beq.s   .set_speed_even
-        move.b  pv_pat_speed_odd_b(a4),d0
+        move.b  pv_pat_speed_even_b(a4),d1
+        lsr.b   #1,d0
+        bcc.s   .set_speed_even
+        move.b  pv_pat_speed_odd_b(a4),d1
 .set_speed_even
-        move.b  d0,pv_pat_line_ticks_b(a4)
+        move.b  d1,pv_pat_line_ticks_b(a4)
 .no_pattern_advance
 
 ; ----------------------------------------
