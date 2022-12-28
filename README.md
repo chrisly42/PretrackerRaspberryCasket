@@ -95,7 +95,7 @@ Raspberry Casket is about twice as fast as the old replayer for playback.
 Unfortunately, the replayer is still pretty slow and has high
 jitter compared to other standard music replayers.
 
-This means it may take up to 33 raster lines (14-19 on average)
+This means it may take up to 32 raster lines (13-18 on average)
 which is significant more than a standard Protracker replayer
 (the original one could take about 60 raster lines worst case and
 about 34 on average!).
