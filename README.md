@@ -100,6 +100,14 @@ about 34 on average!).
 Watch out for *Presto*, the [LightSpeedPlayer](https://github.com/arnaud-carre/LSPlayer) variant that should
 solve this problem.
 
+### Known issues
+
+- Behaviour for undefined volume slides with both up- and down nibble specified is different (e.g. A9A, hi Rapture!). Don't do that.
+- Don't use loops with odd lengths and offsets.
+- Don't stop the music with F00 and use a note delay (EDx) in the same line.
+- Don't try to play music with no waves, instruments or patterns.
+- Shinobi seemed to have used an early beta version of Pretracker where it was possible to specify a Subloop Wait of 0. That's illegal.
+
 ## Changelog
 
 ### V1.1 (unreleased)
@@ -110,7 +118,10 @@ solve this problem.
 - Various small optimizations
 - Store instrument number * 4 on loading to avoid using two adds every frame
 - Optimized speed/shuffle code. Idea of using xor turned out to make things too complicated for pattern breaks/jumps.
+- Rearranged code for more short branches.
+- Drop-in replacement code size: 6324 bytes.
 
 ### V1.0 (26-Dec-22)
  
-- Initial release
+- Initial release.
+- Drop-in replacement code size: 6446 bytes.

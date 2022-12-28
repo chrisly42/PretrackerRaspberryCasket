@@ -2768,6 +2768,32 @@ pre_PlayerTick:
 
 ; d5 = command parameter data
 ; ----------------------------------------
+.pat_set_speed
+        lea     pv_pat_speed_even_b(a4),a1
+        cmpi.b  #MAX_SPEED,d5
+        bhs.s   .pat_set_speed_shuffle
+        move.b  d5,(a1)+            ; pv_pat_speed_even_b
+        move.b  d5,(a1)+            ; pv_pat_speed_odd_b
+        move.b  d5,(a1)+            ; pv_pat_line_ticks_b
+        sne     (a1)+               ; pv_pat_stopped_b
+        IFNE    PRETRACKER_SONG_END_DETECTION
+        seq     (a1)+               ; pv_songend_detected_b
+        ENDC
+        bra     .pat_play_cont
+.pat_set_speed_shuffle
+        moveq.l #15,d2
+        and.w   d5,d2               ; odd speed
+        lsr.w   #4,d5               ; even speed
+        move.b  d5,(a1)+            ; pv_pat_speed_even_b
+        move.b  d2,(a1)+            ; pv_pat_speed_odd_b
+        btst    #0,pv_pat_curr_row_b(a4)
+        beq.s   .pat_shuffle_on_even
+        move.b  d2,d5               ; toggle speed to odd row
+.pat_shuffle_on_even
+        move.b  d5,(a1)+            ; pv_pat_line_ticks_b
+        bra     .pat_play_cont
+
+; ----------------------------------------
 .pat_set_vibrato
         clr.w   pcd_vibrato_pos_w(a5)
         move.w  #1,pcd_vibrato_delay_w(a5)
@@ -2781,12 +2807,12 @@ pre_PlayerTick:
         muls    pcd_vibrato_depth_w(a5),d2
         asr.w   #4,d2
         move.w  d2,pcd_vibrato_speed_w(a5)
-        bra     .pat_play_cont
+        bra.s   .pat_play_cont
 
 ; ----------------------------------------
 .pat_set_track_delay
         cmp.b   #NUM_CHANNELS-1,pcd_channel_num_b(a5)
-        beq     .pat_play_cont  ; we are at channel 3 -- track delay not available here
+        beq.s   .pat_play_cont  ; we are at channel 3 -- track delay not available here
 
         lea     pcd_SIZEOF+pcd_track_delay_buffer+ocd_volume(a5),a1
         moveq.l #MAX_TRACK_DELAY-1,d2
@@ -2799,6 +2825,24 @@ pre_PlayerTick:
         bne.s   .pat_track_delay_set
         st      pcd_track_delay_steps_b(a5)
         bra.s   .handle_track_delay
+
+; ----------------------------------------
+.pat_volume_ramp
+        tst.b   d5
+        beq.s   .pat_play_cont
+        moveq.l #15,d3
+        and.b   d5,d3
+        beq.s   .pat_vol_ramp_up
+        ; NOTE: Changed behaviour: using d3 instead of d5
+        ; if both lower and upper were specified, this
+        ; probably led to a drastic decrease of volume.
+        neg.b   d3
+        move.b  d3,pcd_pat_vol_ramp_speed_b(a5)
+        bra.s   .pat_play_cont
+.pat_vol_ramp_up
+        lsr.b   #4,d5
+        move.b  d5,pcd_pat_vol_ramp_speed_b(a5)
+        bra.s   .pat_play_cont
 
 .pat_track_delay_set
         moveq.l #15,d2
@@ -2824,26 +2868,13 @@ pre_PlayerTick:
         bra.s   .pat_play_cont
 
 ; ----------------------------------------
-.pat_volume_ramp
-        tst.b   d5
-        beq.s   .pat_play_cont
-        moveq.l #15,d3
-        and.b   d5,d3
-        beq.s   .pat_vol_ramp_up
-        ; NOTE: Changed behaviour: using d3 instead of d5
-        ; if both lower and upper were specified, this
-        ; probably led to a drastic decrease of volume.
-        neg.b   d3
-        move.b  d3,pcd_pat_vol_ramp_speed_b(a5)
-        bra.s   .pat_play_cont
-.pat_vol_ramp_up
-        lsr.b   #4,d5
-        move.b  d5,pcd_pat_vol_ramp_speed_b(a5)
+.pat_pos_jump
+        move.b  d5,pv_next_pat_pos_b(a4)
         bra.s   .pat_play_cont
 
 ; ----------------------------------------
-.pat_pos_jump
-        move.b  d5,pv_next_pat_pos_b(a4)
+.pat_pat_break
+        move.b  d5,pv_next_pat_row_b(a4)
         bra.s   .pat_play_cont
 
 ; ----------------------------------------
@@ -2853,37 +2884,6 @@ pre_PlayerTick:
         moveq.l #MAX_VOLUME,d5
 .pat_set_volume_nomax
         move.b  d5,pcd_pat_vol_b(a5)
-        bra.s   .pat_play_cont
-
-; ----------------------------------------
-.pat_pat_break
-        move.b  d5,pv_next_pat_row_b(a4)
-        bra.s   .pat_play_cont
-
-; ----------------------------------------
-.pat_set_speed
-        lea     pv_pat_speed_even_b(a4),a1
-        cmpi.b  #MAX_SPEED,d5
-        bhs.s   .pat_set_speed_shuffle
-        move.b  d5,(a1)+            ; pv_pat_speed_even_b
-        move.b  d5,(a1)+            ; pv_pat_speed_odd_b
-        move.b  d5,(a1)+            ; pv_pat_line_ticks_b
-        sne     (a1)+               ; pv_pat_stopped_b
-        IFNE    PRETRACKER_SONG_END_DETECTION
-        seq     (a1)+               ; pv_songend_detected_b
-        ENDC
-        bra.s   .pat_play_cont
-.pat_set_speed_shuffle
-        moveq.l #15,d2
-        and.w   d5,d2               ; odd speed
-        lsr.w   #4,d5               ; even speed
-        move.b  d5,(a1)+            ; pv_pat_speed_even_b
-        move.b  d2,(a1)+            ; pv_pat_speed_odd_b
-        btst    #0,pv_pat_curr_row_b(a4)
-        beq.s   .pat_shuffle_on_even
-        move.b  d2,d5               ; toggle speed to odd row
-.pat_shuffle_on_even
-        move.b  d5,(a1)+            ; pv_pat_line_ticks_b
 
 ; ----------------------------------------
 
