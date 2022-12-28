@@ -900,7 +900,9 @@ pre_SongInit:
         move.l  d1,sv_wavelength_table-sv_waveinfo_table(a1)
         btst    #2,wi_flags_b(a3)
         beq.s   .onlythreeocts
-        mulu    #15,d1
+        move.l  d1,d2
+        lsl.l   #4,d1           ; * 16
+        sub.l   d2,d1           ; * 15
         lsr.l   #3,d1           ; * 1.875
 .onlythreeocts
         move.l  d1,sv_wavetotal_table-sv_waveinfo_table(a1)
