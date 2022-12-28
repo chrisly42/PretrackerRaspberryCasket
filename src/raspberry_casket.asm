@@ -1,6 +1,6 @@
 ;--------------------------------------------------------------------
-; Raspberry Casket Player V1.0+ (27-Dec-2022)
-; ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+; Raspberry Casket Player V1.1beta (28-Dec-2022)
+; ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ;
 ; Provided by Chris 'platon42' Hodges <chrisly@platon42.de>
 ;
@@ -415,6 +415,7 @@ uii_SIZEOF          rs.b    0
                         rsreset
 sv_waveinfo_table       rs.l    MAX_WAVES ; 24 pointers to wave infos to avoid mulu
 sv_inst_patterns_table  rs.l    MAX_INSTRUMENTS ; 32 pointers to pattern data
+                        ; --- 127 byte displacement limit ---
 sv_wavelength_table     rs.l    MAX_WAVES ; 24 longwords to sample lengths (standard octave) (NEW)
 sv_wavetotal_table      rs.l    MAX_WAVES ; 24 longwords to sample lengths for all octaves (NEW)
 sv_wavegen_order_table  rs.b    MAX_WAVES ; 24 bytes
@@ -544,13 +545,16 @@ owb_SIZEOF      rs.b    0
 pv_pat_curr_row_b       rs.b    1 ; current step
 pv_next_pat_row_b       rs.b    1
 pv_next_pat_pos_b       rs.b    1
-pv_pat_speed_b          rs.b    1 ; speed byte (unfiltered)
+pv_pat_speed_even_b     rs.b    1 ; even shuffle speed
+
+pv_pat_speed_odd_b      rs.b    1 ; odd shuffle speed
+pv_pat_line_ticks_b     rs.b    1
+pv_pat_stopped_b        rs.b    1 ; 0 = stop, $ff = run
+pv_songend_detected_b   rs.b    1
 ; DO NOT CHANGE ORDER -- OPTIMIZED INIT END
 
-pv_pat_stopped_b        rs.b    1 ; 0 = stop, 1 = run
-pv_pat_line_ticks_b     rs.b    1
 pv_loop_pattern_b       rs.b    1 ; repeat current pattern, do not advance
-pv_songend_detected_b   rs.b    1
+                        rs.b    1 ; padding
 
 pv_trigger_mask_w       rs.w    1
 
@@ -559,7 +563,9 @@ pv_sample_buffer_ptr    rs.l    1 ; pointer to start of sample buffer
 pv_copperlist_ptr       rs.l    1
 pv_wave_sample_table    rs.l    MAX_WAVES ; 24 pointers to sample starts
 pv_period_table         rs.w    16*NOTES_IN_OCTAVE*3
+                        ; --- 127 byte displacement limit ---
 pv_channeldata          rs.b    NUM_CHANNELS*pcd_SIZEOF
+
                         IFNE    PRETRACKER_VOLUME_TABLE
 pv_osc_buffers          rs.b    0 ; reuse space of volume_table, which is bigger than NOTES_IN_OCTAVE*owb_SIZEOF
 pv_volume_table         rs.b    (MAX_VOLUME+1)*MAX_VOLUME*2
@@ -1003,10 +1009,8 @@ pre_PlayerInit:
 
 ; ----------------------------------------
 
-        move.l  #$00ffff06,pv_pat_curr_row_b(a4)    ; pattern frame = 0, line = $ff, pattern pos = $ff, speed = 6
-        move.b  #1,pv_pat_stopped_b(a4)             ; start pattern processing
-
-        bsr     pre_update_pat_line_counter
+        move.l  #$00ffff06,pv_pat_curr_row_b(a4)    ; pattern frame = 0, line = $ff, pattern pos = $ff, speed_even = 0
+        move.l  #$06060100,pv_pat_speed_odd_b(a4)   ; and pv_pat_line_ticks_b, pv_pat_stopped_b, pv_songend_detected_b
 
         move.l  sv_waveinfo_ptr(a6),a1
         lea     pv_channeldata(a4),a0
@@ -2515,7 +2519,7 @@ pre_PlayerTick:
         bne.s   .pat_is_not_ed_cmd
         ; note delay in x sub steps
         IFNE    PRETRACKER_PARANOIA_MODE    ; who does this kind of stuff?
-        tst.b   pv_pat_speed_b(a4)
+        tst.b   pv_pat_speed_even_b(a4)
         beq.s   .pat_exy_cmd_cont
         ENDC
         move.b  d1,pcd_note_delay_b(a5)
@@ -2858,17 +2862,28 @@ pre_PlayerTick:
 
 ; ----------------------------------------
 .pat_set_speed
-        move.b  d5,pv_pat_speed_b(a4)
-        sne     d2
-        neg.b   d2
-        move.b  d2,pv_pat_stopped_b(a4)
+        lea     pv_pat_speed_even_b(a4),a1
+        cmpi.b  #MAX_SPEED,d5
+        bhs.s   .pat_set_speed_shuffle
+        move.b  d5,(a1)+            ; pv_pat_speed_even_b
+        move.b  d5,(a1)+            ; pv_pat_speed_odd_b
+        move.b  d5,(a1)+            ; pv_pat_line_ticks_b
+        sne     (a1)+               ; pv_pat_stopped_b
         IFNE    PRETRACKER_SONG_END_DETECTION
-        bne.s   .pat_no_songend
-        st      pv_songend_detected_b(a4)
-.pat_no_songend
+        seq     (a1)+               ; pv_songend_detected_b
         ENDC
-
-        bsr     pre_update_pat_line_counter
+        bra.s   .pat_play_cont
+.pat_set_speed_shuffle
+        moveq.l #15,d2
+        and.w   d5,d2               ; odd speed
+        lsr.w   #4,d5               ; even speed
+        move.b  d5,(a1)+            ; pv_pat_speed_even_b
+        move.b  d2,(a1)+            ; pv_pat_speed_odd_b
+        btst    #0,pv_pat_curr_row_b(a4)
+        beq.s   .pat_shuffle_on_even
+        move.b  d2,d5               ; toggle speed to odd row
+.pat_shuffle_on_even
+        move.b  d5,(a1)+            ; pv_pat_line_ticks_b
 
 ; ----------------------------------------
 
@@ -2894,8 +2909,9 @@ pre_PlayerTick:
 ; pattern advancing FIXME try to figure out all the cases
 .pattern_advancing
         subq.b  #1,pv_pat_line_ticks_b(a4)
-        bne     .inst_pattern_processing
+        bne     .no_pattern_advance
 
+        ; clear note delay info
         moveq.l #0,d1
         REPT    NUM_CHANNELS
         move.b  d1,pv_channeldata+pcd_note_delay_b+REPTN*pcd_SIZEOF(a4)
@@ -2996,7 +3012,13 @@ pre_PlayerTick:
 .set_song_pos
         move.w  d0,sv_curr_pat_pos_w(a6)
 .done_pat_advance
-        bsr     pre_update_pat_line_counter
+        move.b  pv_pat_speed_even_b(a4),d0
+        btst    #0,pv_pat_curr_row_b(a4)
+        beq.s   .set_speed_even
+        move.b  pv_pat_speed_odd_b(a4),d0
+.set_speed_even
+        move.b  d0,pv_pat_line_ticks_b(a4)
+.no_pattern_advance
 
 ; ----------------------------------------
 ; processes the instrument pattern for each running instrument
@@ -3875,8 +3897,8 @@ pre_PlayerTick:
         move.l  pcd_out_base+8(a5),(a3)+   ; ocd_period/ocd_volume/ocd_trigger
         ;move.l   pcd_out_base+12(a5),(a3)+ ; this is never used
 
-        move.b  pcd_SIZEOF+pcd_channel_mask_b(a5),d2
-        tst.b   -(a3)
+        move.b  -(a3),d2
+        add.b   d2,d2               ; increment channel
         bne.s   .copy_trigger_for_delayed_channel
         tst.b   pcd_SIZEOF+pcd_track_delay_steps_b(a5)
         bne.s   .dont_trigger_track_delay_first_note
@@ -4035,7 +4057,7 @@ pre_PlayerTick:
 
         ; turn channels off and remember raster position
         move.w  d2,dmacon(a5)       ; turn dma channels off
-        move.w  vhposr(a5),d5
+        move.w  vhposr(a5),d5       ; I know this only works for the lower 256 rasterlines...
         add.w   #4<<8,d5            ; target rasterpos
 
         ; in the meanwhile we can update both channels that
@@ -4077,11 +4099,11 @@ pre_PlayerTick:
         tst.w   d2
         beq.s   .skiprasterwait ; if no channel needed triggering, we are done!
 
+        or.w    #DMAF_SETCLR,d2
 .rasterwait1
         cmp.w   vhposr(a5),d5
         bgt.s   .rasterwait1
 
-        or.w    #DMAF_SETCLR,d2
         move.w  d2,dmacon(a5)   ; enable triggered channels
         add.w   #4<<8,d5        ; target rasterpos
 
@@ -4117,22 +4139,6 @@ pre_PlayerTick:
         IFNE    PRETRACKER_DONT_TRASH_REGS
         movem.l (sp)+,d2-d7/a2-a6
         ENDC
-        rts
-
-; ----------------------------------------
-
-pre_update_pat_line_counter
-        move.b  pv_pat_speed_b(a4),d1
-        cmpi.b  #MAX_SPEED,d1
-        bls.s   .pat_set_speed_no_shuffle
-        btst    #0,pv_pat_curr_row_b(a4)
-        beq.s   .pat_set_even_speed
-        andi.b  #15,d1
-        bra.s   .pat_set_speed_no_shuffle
-.pat_set_even_speed
-        lsr.b   #4,d1
-.pat_set_speed_no_shuffle
-        move.b  d1,pv_pat_line_ticks_b(a4)
         rts
 
 ;--------------------------------------------------------------------

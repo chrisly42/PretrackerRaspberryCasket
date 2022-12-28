@@ -109,6 +109,7 @@ solve this problem.
 - Bake in this strange vibrato speed multiplication to precalculated vibrato value (where possible)
 - Various small optimizations
 - Store instrument number * 4 on loading to avoid using two adds every frame
+- Optimized speed/shuffle code. Idea of using xor turned out to make things too complicated for pattern breaks/jumps.
 
 ### V1.0 (26-Dec-22)
  
